@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
-// import { writeFile } from 'fs';
 import { put } from '@tigrisdata/storage';
 import mime from 'mime';
-// import { Variant } from '@/types'
+import { db } from "@/db";
+import { usersTable } from "@/db/schema";
+import { auth } from '@clerk/nextjs/server';
 
 export async function POST(request: NextRequest) {
     type RequestBody = { prompt?: string; image?: string };
@@ -23,6 +24,8 @@ export async function POST(request: NextRequest) {
       ],
     };
     const model = 'gemini-2.5-flash-image-preview';
+
+    const { userId } = await auth();
   
     const imageString = typeof body.image === 'string' ? (body.image as string) : undefined;
     // contents can be a plain string (text-only) or a structured content array
@@ -107,6 +110,18 @@ export async function POST(request: NextRequest) {
       }
     }
     if (savedImageUrl) {
+      const generation: typeof usersTable.$inferInsert = {
+        userId: userId ?? null,
+        prompt: String(body.prompt || ''),
+        inputImageUrl: imageString || '',
+        outputImageUrl: savedImageUrl || '',
+        model: 'gemini-image-flash',
+        status: 'completed',
+        error: '',
+        metadata: {},
+      }
+      await db.insert(usersTable).values(generation);
+      
       return NextResponse.json({
         success: true,
         image: savedImageUrl,

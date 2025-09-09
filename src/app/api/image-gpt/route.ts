@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { put } from '@tigrisdata/storage';
 import mime from 'mime';
+import { db } from "@/db";
+import { usersTable } from "@/db/schema";
+import { auth } from '@clerk/nextjs/server';
+
 
 export async function POST(request: NextRequest) {
   type RequestBody = { prompt?: string; image?: string };
@@ -14,6 +18,8 @@ export async function POST(request: NextRequest) {
   }
 
   const openai = new OpenAI({ apiKey });
+
+  const { userId } = await auth();
 
   // Build the input content for Responses API
   type InputContent =
@@ -106,6 +112,17 @@ export async function POST(request: NextRequest) {
     }
 
     if (savedImageUrl) {
+      const generation: typeof usersTable.$inferInsert = {
+        userId: userId ?? null,
+        prompt: String(body.prompt || ''),
+        inputImageUrl: savedImageUrl || '',
+        outputImageUrl: savedImageUrl || '',
+        model: 'image-gpt',
+        status: 'completed',
+        error: '',
+        metadata: {},
+      }
+      await db.insert(usersTable).values(generation);
       return NextResponse.json({
         success: true,
         image: savedImageUrl,
