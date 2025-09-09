@@ -138,31 +138,34 @@ export default function Home() {
         body: JSON.stringify(payload),
       } as const;
 
-      const geminiPromise: Promise<ModelResponse> = fetch("/api/gemini-image-flash", {
-        ...fetchParams,
-      }).then(async (r) => {
-        if (!r.ok) throw new Error(await r.text().catch(() => "Gemini request failed"));
-        return r.json() as Promise<ModelResponse>;
-      });
-
-      const imageGptPromise: Promise<ModelResponse> = fetch("/api/image-gpt", {
-        ...fetchParams,
-      }).then(async (r) => {
-        if (!r.ok) throw new Error(await r.text().catch(() => "Image-GPT request failed"));
-        return r.json() as Promise<ModelResponse>;
-      });
-
-      const fluxPromise: Promise<ModelResponse> = fetch("/api/flux-1", {
-        ...fetchParams,
-      }).then(async (r) => {
-        if (!r.ok) throw new Error(await r.text().catch(() => "Flux-1 request failed"));
-        return r.json() as Promise<ModelResponse>;
-      });
-
       const tasks: { label: string; promise: Promise<ModelResponse> }[] = [];
-      if (selectedModels.imageGpt) tasks.push({ label: "Image-GPT", promise: imageGptPromise });
-      if (selectedModels.gemini) tasks.push({ label: "Gemini", promise: geminiPromise });
-      if (selectedModels.flux) tasks.push({ label: "Flux-1", promise: fluxPromise });
+      if (selectedModels.imageGpt) {
+        const imageGptPromise: Promise<ModelResponse> = fetch("/api/image-gpt", {
+          ...fetchParams,
+        }).then(async (r) => {
+          if (!r.ok) throw new Error(await r.text().catch(() => "Image-GPT request failed"));
+          return r.json() as Promise<ModelResponse>;
+        });
+        tasks.push({ label: "Image-GPT", promise: imageGptPromise });
+      }
+      if (selectedModels.gemini) {
+        const geminiPromise: Promise<ModelResponse> = fetch("/api/gemini-image-flash", {
+          ...fetchParams,
+        }).then(async (r) => {
+          if (!r.ok) throw new Error(await r.text().catch(() => "Gemini request failed"));
+          return r.json() as Promise<ModelResponse>;
+        });
+        tasks.push({ label: "Gemini", promise: geminiPromise });
+      }
+      if (selectedModels.flux) {
+        const fluxPromise: Promise<ModelResponse> = fetch("/api/flux-1", {
+          ...fetchParams,
+        }).then(async (r) => {
+          if (!r.ok) throw new Error(await r.text().catch(() => "Flux-1 request failed"));
+          return r.json() as Promise<ModelResponse>;
+        });
+        tasks.push({ label: "Flux-1", promise: fluxPromise });
+      }
 
       const initialVariants = tasks.map((t) => ({ label: t.label }));
       const startTimes: Record<string, number> = {};
