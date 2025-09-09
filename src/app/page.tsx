@@ -58,18 +58,6 @@ export default function Home() {
     .map(([k]) => (k === "gemini" ? "Gemini" : k === "flux" ? "Flux-1" : "Image-GPT"))
     .filter((label) => label !== "Flux-1");
 
-  const handleVote = (messageId: string, label: string, vote: "up" | "down") => {
-    setMessages((prev) => prev.map((m) => {
-      if (m.id !== messageId) return m;
-      const nextVariants = (m.variants || []).map((v) => {
-        if (v.label !== label) return v;
-        const nextVote = v.vote === vote ? undefined : vote;
-        return { ...v, vote: nextVote };
-      });
-      return { ...m, variants: nextVariants };
-    }));
-  };
-
   useEffect(() => {
     if (!hasRun) return;
     requestAnimationFrame(() => {
@@ -156,7 +144,7 @@ export default function Home() {
         if (!r.ok) throw new Error(await r.text().catch(() => "Gemini request failed"));
         return r.json() as Promise<ModelResponse>;
       });
-      // Flux disabled for now
+
       const imageGptPromise: Promise<ModelResponse> = fetch("/api/image-gpt", {
         ...fetchParams,
       }).then(async (r) => {
@@ -530,13 +518,16 @@ export default function Home() {
           </div>
         )}
       </main>
-      {/* Powered by Tigris footer (centered) */}
-      <div className="w-full flex justify-center pb-4 mb-24">
+      {/* Powered by Tigris fixed footer (centered) */}
+      <div
+        className="fixed left-0 right-0 flex justify-center z-30 pointer-events-none"
+        style={{ bottom: composerVisible ? 96 : 16 }}
+      >
         <a
           href="https://www.tigrisdata.com"
           target="_blank"
           rel="noopener noreferrer"
-          className="flex flex-col items-center gap-1 text-white/70 hover:text-white"
+          className="flex flex-col items-center gap-1 text-white/70 hover:text-white pointer-events-auto"
         >
           <span className="text-sm">Powered by</span>
           <Image src="/tigris-logo.svg" alt="Tigris" width={96} height={24} />
@@ -604,29 +595,3 @@ export default function Home() {
     </div>
   );
 }
-
-// type CardProps = {
-//   title: string;
-//   description: string;
-//   icon: string;
-//   badge?: string;
-// };
-
-// function Card({ title, description, icon, badge }: CardProps) {
-//   return (
-//     <div className="flex items-start gap-4 rounded-2xl border border-white/10 bg-white/5 p-4">
-//       <div className="h-12 w-12 rounded-md bg-white/10 grid place-items-center">
-//         <Image src={icon} alt="" width={24} height={24} />
-//       </div>
-//       <div className="flex-1 min-w-0">
-//         <div className="flex items-center gap-2">
-//           <h3 className="text-base font-medium truncate">{title}</h3>
-//           {badge ? (
-//             <span className="text-[10px] uppercase tracking-wider bg-white/10 border border-white/15 rounded px-1.5 py-0.5">{badge}</span>
-//           ) : null}
-//         </div>
-//         <p className="text-sm text-white/70 mt-1">{description}</p>
-//       </div>
-//     </div>
-//   );
-// }
