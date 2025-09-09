@@ -4,7 +4,8 @@ import { put } from '@tigrisdata/storage';
 import mime from 'mime';
 
 export async function POST(request: NextRequest) {
-  const body = await request.json();
+  type RequestBody = { prompt?: string; image?: string };
+  const body = (await request.json()) as RequestBody;
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -15,7 +16,10 @@ export async function POST(request: NextRequest) {
   const openai = new OpenAI({ apiKey });
 
   // Build the input content for Responses API
-  const content: Array<any> = [
+  type InputContent =
+    | { type: 'input_text'; text: string }
+    | { type: 'input_image'; image_url: string; detail: 'auto' | 'low' | 'high' };
+  const content: Array<InputContent> = [
     { type: "input_text", text: String(body.prompt || '') },
   ];
   if (typeof body.image === 'string') {
@@ -33,7 +37,7 @@ export async function POST(request: NextRequest) {
       // Treat as raw base64; wrap in a data URL
       dataUrl = `data:image/png;base64,${dataUrl}`;
     }
-    content.push({ type: 'input_image', image_url: dataUrl });
+    content.push({ type: 'input_image', image_url: dataUrl, detail: 'auto' });
   }
 
   try {
@@ -49,24 +53,37 @@ export async function POST(request: NextRequest) {
     });
 
     // Extract generated image(s)
-    const imageOutputs = (response as any).output?.filter((o: any) => o?.type === 'image_generation_call') || [];
-    const imageBase64List: string[] = imageOutputs.map((o: any) => {
+    type OutputItem = { type?: string; result?: unknown; text?: string };
+    type ResponseShape = { output?: unknown; usage?: unknown; meta?: { usage?: unknown } };
+    const resp = response as unknown as ResponseShape;
+    const outputsRaw = resp.output;
+    const outputs: OutputItem[] = Array.isArray(outputsRaw) ? (outputsRaw as OutputItem[]) : [];
+    const imageOutputs = outputs.filter((o: OutputItem) => o?.type === 'image_generation_call');
+    const imageBase64List: string[] = imageOutputs.map((o: OutputItem) => {
       // Some SDK versions return o.result directly as base64
-      if (typeof o?.result === 'string') return o.result;
+      if (typeof o?.result === 'string') return o.result as string;
       // Fallbacks for potential shapes
-      if (typeof o?.result?.b64_json === 'string') return o.result.b64_json;
+      const r = o?.result as { b64_json?: unknown } | undefined;
+      if (r && typeof r.b64_json === 'string') return r.b64_json;
       return '';
     }).filter((s: string) => s.length > 0);
 
     // Extract output text (if any)
-    const textOutputs = (response as any).output?.filter((o: any) => o?.type === 'output_text') || [];
-    const fullText = textOutputs.map((t: any) => t?.text || '').join('');
+    type TextOutputItem = { type?: string; text?: string };
+    const textOutputs = outputs.filter((o: TextOutputItem) => o?.type === 'output_text') as TextOutputItem[];
+    const fullText = textOutputs.map((t) => t?.text || '').join('');
 
     // Extract token usage if available
-    const usageObj: any = (response as any).usage || (response as any).meta?.usage || {};
-    const inputTokens: number | undefined = usageObj.input_tokens ?? usageObj.prompt_tokens;
-    const outputTokens: number | undefined = usageObj.output_tokens ?? usageObj.completion_tokens;
-    const totalTokens: number | undefined = usageObj.total_tokens ?? (
+    const rawUsage = (resp.usage ?? resp.meta?.usage ?? {}) as {
+      input_tokens?: number;
+      prompt_tokens?: number;
+      output_tokens?: number;
+      completion_tokens?: number;
+      total_tokens?: number;
+    };
+    const inputTokens: number | undefined = rawUsage.input_tokens ?? rawUsage.prompt_tokens;
+    const outputTokens: number | undefined = rawUsage.output_tokens ?? rawUsage.completion_tokens;
+    const totalTokens: number | undefined = rawUsage.total_tokens ?? (
       typeof inputTokens === 'number' && typeof outputTokens === 'number'
         ? inputTokens + outputTokens
         : undefined

@@ -530,6 +530,18 @@ export default function Home() {
           </div>
         )}
       </main>
+      {/* Powered by Tigris footer (centered) */}
+      <div className="w-full flex justify-center pb-4 mb-24">
+        <a
+          href="https://www.tigrisdata.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex flex-col items-center gap-1 text-white/70 hover:text-white"
+        >
+          <span className="text-sm">Powered by</span>
+          <Image src="/tigris-logo.svg" alt="Tigris" width={96} height={24} />
+        </a>
+      </div>
       {/* Global chat composer fixed at bottom; visible during first transition and after */}
       <form onSubmit={handleSubmit} className={`fixed bottom-0 left-0 right-0 w-full transition-opacity duration-200 ${composerVisible ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
         <div className="mx-auto w-full max-w-3xl px-6 sm:px-8 pb-6">

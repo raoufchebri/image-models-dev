@@ -6,7 +6,8 @@ import mime from 'mime';
 // import { Variant } from '@/types'
 
 export async function POST(request: NextRequest) {
-    const body = await request.json();
+    type RequestBody = { prompt?: string; image?: string };
+    const body = (await request.json()) as RequestBody;
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       console.error('Missing GEMINI_API_KEY. Set it in your environment or a .env file.');
@@ -24,7 +25,9 @@ export async function POST(request: NextRequest) {
     const model = 'gemini-2.5-flash-image-preview';
   
     const imageString = typeof body.image === 'string' ? (body.image as string) : undefined;
-    let contents: any = String(body.prompt || '');
+    // contents can be a plain string (text-only) or a structured content array
+    type UserContent = { role: 'user'; parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }>; };
+    let contents: string | UserContent[] = String(body.prompt || '');
     if (imageString) {
       let inlineMime = 'image/png';
       let inlineData = '';
@@ -67,12 +70,18 @@ export async function POST(request: NextRequest) {
     let promptTokenCount: number | undefined;
     let candidatesTokenCount: number | undefined;
     let totalTokenCount: number | undefined;
-    for await (const chunk of response) {
-      if (!chunk.candidates || !chunk.candidates[0].content || !chunk.candidates[0].content.parts) {
+    type UsageMetadata = { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number };
+    type InlineData = { mimeType?: string; data?: string };
+    type Part = { text?: string; inlineData?: InlineData };
+    type CandidateContent = { parts?: Part[] };
+    type Candidate = { content?: CandidateContent; usageMetadata?: UsageMetadata };
+    type StreamChunk = { candidates?: Candidate[]; text?: string; usageMetadata?: UsageMetadata };
+    for await (const chunk of response as AsyncIterable<StreamChunk>) {
+      if (!chunk.candidates || !chunk.candidates[0]?.content || !chunk.candidates[0]?.content?.parts) {
         continue;
       }
       // Capture usage metadata when available (usually present on terminal chunks)
-      const usage = (chunk as any).usageMetadata || (chunk.candidates?.[0] as any)?.usageMetadata;
+      const usage: UsageMetadata | undefined = chunk.usageMetadata || chunk.candidates?.[0]?.usageMetadata;
       if (usage) {
         if (typeof usage.promptTokenCount === 'number') promptTokenCount = usage.promptTokenCount;
         if (typeof usage.candidatesTokenCount === 'number') candidatesTokenCount = usage.candidatesTokenCount;
