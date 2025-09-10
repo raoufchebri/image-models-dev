@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { usersTable } from "@/db/schema";
 import { auth } from '@clerk/nextjs/server';
+import { uploadFile } from "@/storage";
+import mime from 'mime';
 
 const BFL_ENDPOINT = 'https://api.bfl.ai/v1/flux-kontext-pro';
 
@@ -63,13 +65,63 @@ export async function POST(request: NextRequest) {
     
     const okStatuses = new Set(['Ready', 'Completed', 'Complete', 'Success', 'Succeeded']);
     if (pollJson.status && okStatuses.has(pollJson.status)) {
-      const imageUrl = pollJson.result?.sample || pollJson.result?.url || pollJson.result?.image;
+      const originalImageUrl = pollJson.result?.sample || pollJson.result?.url || pollJson.result?.image;
+
+      // Try to upload the generated image to object storage
+      let savedImageUrl: string | undefined = originalImageUrl;
+      try {
+        if (typeof originalImageUrl === 'string' && originalImageUrl.length > 0) {
+          let mimeType = 'image/png';
+          let imageBuffer: Buffer | undefined;
+
+          if (/^data:/i.test(originalImageUrl)) {
+            // data URL case
+            const parts = originalImageUrl.split(',');
+            const header = parts[0] || '';
+            const b64 = parts[1] || '';
+            const headerMime = header.split(';')[0]?.replace('data:', '') || '';
+            if (headerMime) mimeType = headerMime;
+            if (b64) imageBuffer = Buffer.from(b64, 'base64');
+          } else {
+            // remote URL case
+            const res = await fetch(originalImageUrl);
+            if (res.ok) {
+              const contentType = res.headers.get('content-type');
+              if (contentType) {
+                mimeType = contentType;
+              } else {
+                try {
+                  mimeType = mime.getType(new URL(originalImageUrl).pathname) || 'image/png';
+                } catch {
+                  mimeType = 'image/png';
+                }
+              }
+              const arrayBuf = await res.arrayBuffer();
+              imageBuffer = Buffer.from(arrayBuf);
+            }
+          }
+
+          if (imageBuffer) {
+            const randomImageName = Math.random().toString(36).substring(2, 15);
+            const ext = mime.getExtension(mimeType) || 'png';
+            const fileName = `${randomImageName}.0.${ext}`;
+            try {
+              const url = await uploadFile(fileName, imageBuffer, mimeType);
+              if (url) savedImageUrl = url;
+            } catch {
+              // ignore and fall back to original URL
+            }
+          }
+        }
+      } catch {
+        // ignore upload errors; we'll fall back to originalImageUrl
+      }
 
       const generation: typeof usersTable.$inferInsert = {
         userId: userId ?? null,
         prompt: prompt,
         inputImageUrl: input_image || '',
-        outputImageUrl: imageUrl || '',
+        outputImageUrl: savedImageUrl || originalImageUrl || '',
         model: 'flux-1',
         status: 'completed',
         error: '',
@@ -80,7 +132,7 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({
         success: true,
-        url: imageUrl,
+        url: savedImageUrl || originalImageUrl,
       });
     } else if (pollJson.status === 'Error' || pollJson.status === 'Failed') {
       return NextResponse.json({ error: 'Generation failed', details: pollJson }, { status: 500 });
@@ -90,8 +142,5 @@ export async function POST(request: NextRequest) {
 
   // If we get here, we timed out
   return NextResponse.json({ error: 'Generation timed out' }, { status: 504 });
-}
-function uuidv4(): string | null | undefined {
-  throw new Error("Function not implemented.");
 }
 

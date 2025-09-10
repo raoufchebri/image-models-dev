@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
-import { put } from '@tigrisdata/storage';
 import mime from 'mime';
 import { db } from "@/db";
 import { usersTable } from "@/db/schema";
 import { auth } from '@clerk/nextjs/server';
+import { uploadFile } from "@/storage";
 
 export async function POST(request: NextRequest) {
     type RequestBody = { prompt?: string; image?: string };
@@ -99,7 +99,7 @@ export async function POST(request: NextRequest) {
         const buffer = Buffer.from(inlineData.data || '', 'base64');
         const dataUrl = `data:${mimeType};base64,${inlineData.data || ''}`;
         try {
-          const url = await saveBinaryFile(`${fileName}.${fileExtension}`, buffer, mimeType);
+          const url = await uploadFile(`${fileName}.${fileExtension}`, buffer, mimeType);
           savedImageUrl = url || dataUrl;
         } catch {
           savedImageUrl = dataUrl;
@@ -148,16 +148,6 @@ export async function POST(request: NextRequest) {
     }
     return NextResponse.json({ error: 'No image or text was generated' }, { status: 500 });
 }
-
-  
-async function saveBinaryFile(fileName: string, content: Buffer, contentType: string) {
-    const imageResult = await put(`images/${fileName}`, content, {
-        contentType,
-        access: 'public',
-        allowOverwrite: true,
-    });
-    return imageResult.data?.url;
-  }
 
 
   

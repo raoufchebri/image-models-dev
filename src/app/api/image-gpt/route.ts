@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
-import { put } from '@tigrisdata/storage';
+import { uploadFile } from "@/storage";
 import mime from 'mime';
 import { db } from "@/db";
 import { usersTable } from "@/db/schema";
@@ -104,7 +104,7 @@ export async function POST(request: NextRequest) {
       const buffer = Buffer.from(imageBase64List[0], 'base64');
 
       try {
-        const url = await saveBinaryFile(fileName, buffer, mimeType);
+        const url = await uploadFile(fileName, buffer, mimeType);
         savedImageUrl = url || `data:${mimeType};base64,${imageBase64List[0]}`;
       } catch {
         savedImageUrl = `data:${mimeType};base64,${imageBase64List[0]}`;
@@ -152,13 +152,4 @@ export async function POST(request: NextRequest) {
     const message = err instanceof Error ? err.message : 'Unexpected error';
     return NextResponse.json({ error: message }, { status: 500 });
   }
-}
-
-async function saveBinaryFile(fileName: string, content: Buffer, contentType: string) {
-  const imageResult = await put(`images/${fileName}`, content, {
-    contentType,
-    access: 'public',
-    allowOverwrite: true,
-  });
-  return imageResult.data?.url;
 }
