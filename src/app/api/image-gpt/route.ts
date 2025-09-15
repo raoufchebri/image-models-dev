@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import { uploadFile } from "@/storage";
 import mime from 'mime';
 import { db } from "@/db";
 import { usersTable } from "@/db/schema";
 import { auth } from '@clerk/nextjs/server';
 import { and, eq } from 'drizzle-orm';
+import fs from 'fs';
 
 
 export async function POST(request: NextRequest) {
@@ -48,42 +49,30 @@ export async function POST(request: NextRequest) {
     } catch {}
   }
 
-  // Build the input content for Responses API
-  type InputContent =
-    | { type: 'input_text'; text: string }
-    | { type: 'input_image'; image_url: string; detail: 'auto' | 'low' | 'high' };
-  const content: Array<InputContent> = [
-    { type: "input_text", text: promptText },
-  ];
-  if (typeof body.image === 'string') {
-    let dataUrl = body.image as string;
-    if (/^https?:\/\//i.test(dataUrl)) {
-      const res = await fetch(dataUrl);
-      if (!res.ok) {
-        return NextResponse.json({ error: `Failed to fetch image URL: ${res.status}` }, { status: 400 });
-      }
-      const contentType = res.headers.get('content-type') || mime.getType(new URL(dataUrl).pathname) || 'image/png';
-      const arrayBuf = await res.arrayBuffer();
-      const b64 = Buffer.from(arrayBuf).toString('base64');
-      dataUrl = `data:${contentType};base64,${b64}`;
-    } else if (!dataUrl.startsWith('data:')) {
-      // Treat as raw base64; wrap in a data URL
-      dataUrl = `data:image/png;base64,${dataUrl}`;
-    }
-    content.push({ type: 'input_image', image_url: dataUrl, detail: 'auto' });
-  }
-
   try {
-    const response = await openai.responses.create({
-      model: 'gpt-5',
-      input: [
-        {
-          role: 'user',
-          content,
-        },
-      ],
-      tools: [{ type: 'image_generation', size: '1024x1024' }],
-    });
+    let response: OpenAI.Images.ImagesResponse;
+    if (body.image) {
+      const images = await Promise.all(
+        [body.image].map(async (file) =>
+            await toFile(fs.createReadStream(file as string), null, {
+                type: "image/png",
+            })
+        ),
+      );
+
+      response = await openai.images.edit({
+        model: 'gpt-image-1',
+        prompt: promptText,
+        image: images,
+      });
+    }
+    else {
+
+      response = await openai.images.generate({
+        model: 'gpt-image-1',
+        prompt: promptText,
+      });
+    }
 
     // Extract generated image(s)
     type OutputItem = { type?: string; result?: unknown; text?: string };
