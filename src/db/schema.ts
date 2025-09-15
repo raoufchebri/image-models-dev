@@ -3,7 +3,7 @@ import { integer, pgTable, varchar, timestamp, jsonb } from "drizzle-orm/pg-core
 export const usersTable = pgTable("generations", {
     id: integer().primaryKey().generatedAlwaysAsIdentity(),
     userId: varchar({ length: 255 }),
-    prompt: varchar({ length: 255 }).notNull(),
+    prompt: varchar({ length: 2000 }).notNull(),
     inputImageUrl: varchar({ length: 255 }).notNull(),
     outputImageUrl: varchar({ length: 255 }).notNull(),
     model: varchar({ length: 255 }).notNull(),
