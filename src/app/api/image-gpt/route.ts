@@ -5,10 +5,11 @@ import mime from 'mime';
 import { db } from "@/db";
 import { usersTable } from "@/db/schema";
 import { auth } from '@clerk/nextjs/server';
+import { and, eq } from 'drizzle-orm';
 
 
 export async function POST(request: NextRequest) {
-  type RequestBody = { prompt?: string; image?: string };
+  type RequestBody = { prompt?: string; image?: string; enhance?: boolean };
   const body = (await request.json()) as RequestBody;
 
   const apiKey = process.env.OPENAI_API_KEY;
@@ -20,13 +21,39 @@ export async function POST(request: NextRequest) {
   const openai = new OpenAI({ apiKey });
 
   const { userId } = await auth();
+  if (!userId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  // Rate limit: max 10 completed image generations per user
+  try {
+    const existing = await db
+      .select({ id: usersTable.id })
+      .from(usersTable)
+      .where(and(eq(usersTable.userId, userId), eq(usersTable.status, 'completed')))
+      .limit(11);
+    if (existing.length >= 10) {
+      return NextResponse.json({ error: 'You have reached the limit of 10 image generations.' }, { status: 429 });
+    }
+  } catch {}
+  const enhance = Boolean(body?.enhance);
+
+  // Optionally enhance the prompt first using the same OpenAI provider
+  let promptText = String(body.prompt || '');
+  if (enhance && promptText.trim().length > 0) {
+    try {
+      const enhanced = await enhancePromptWithOpenAI(openai, promptText);
+      if (enhanced.trim().length > 0) {
+        promptText = enhanced.trim();
+      }
+    } catch {}
+  }
 
   // Build the input content for Responses API
   type InputContent =
     | { type: 'input_text'; text: string }
     | { type: 'input_image'; image_url: string; detail: 'auto' | 'low' | 'high' };
   const content: Array<InputContent> = [
-    { type: "input_text", text: String(body.prompt || '') },
+    { type: "input_text", text: promptText },
   ];
   if (typeof body.image === 'string') {
     let dataUrl = body.image as string;
@@ -114,7 +141,7 @@ export async function POST(request: NextRequest) {
     if (savedImageUrl) {
       const generation: typeof usersTable.$inferInsert = {
         userId: userId ?? null,
-        prompt: String(body.prompt || ''),
+        prompt: promptText,
         inputImageUrl: savedImageUrl || '',
         outputImageUrl: savedImageUrl || '',
         model: 'image-gpt',
@@ -151,5 +178,25 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unexpected error';
     return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+async function enhancePromptWithOpenAI(openai: OpenAI, prompt: string): Promise<string> {
+  const system = 'You are an expert image prompt engineer. Unsure the prompt creates an image. If the proimpt does not contain any instructions about creating an image, feel free to create one yourself. If the user has a prompt that creaters an image, improve the prompt with vivid, concrete, unambiguous details, styles, lighting, camera, composition, and constraints, but keep the original intent. Return only the improved prompt.';
+  try {
+    const resp = await openai.responses.create({
+      model: 'gpt-5',
+      input: [
+        { role: 'system', content: [{ type: 'input_text', text: system }] },
+        { role: 'user', content: [{ type: 'input_text', text: prompt }] },
+      ],
+    });
+    const outputs = (resp as unknown as { output?: unknown[] })?.output || [];
+    const text = Array.isArray(outputs)
+      ? outputs.filter((o: unknown) => (o as { type?: string })?.type === 'output_text').map((o: unknown) => (o as { text?: string })?.text || '').join('').trim()
+      : '';
+    return text || prompt;
+  } catch {
+    return prompt;
   }
 }

@@ -3,7 +3,7 @@
 import { useState, useRef } from "react";
 import Image from "next/image";
 
-export function ProgressiveImage({ src, alt, onClick, children, compareSrc }: { src: string; alt: string; onClick?: () => void; children?: React.ReactNode; compareSrc?: string | null }) {
+export function ProgressiveImage({ src, alt, onClick, children, compareSrc, width = 256, height = 256 }: { src: string; alt: string; onClick?: () => void; children?: React.ReactNode; compareSrc?: string | null; width?: number | string; height?: number; }) {
     const [loaded, setLoaded] = useState(false);
     const [hoverX, setHoverX] = useState<number | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
@@ -24,10 +24,15 @@ export function ProgressiveImage({ src, alt, onClick, children, compareSrc }: { 
     const showCompare = Boolean(compareSrc);
     const clipPercent = hoverX !== null ? Math.round(hoverX * 100) : 50;
   
+    const widthValue = typeof width === 'number' ? `${width}px` : width;
+    const heightValue = typeof height === 'number' ? `${height}px` : `${height}px`;
+    const sizesStr = typeof width === 'number' ? `${width}px` : (typeof width === 'string' ? width : '256px');
+
     return (
       <div
         ref={containerRef}
-        className="relative w-[256px] h-[256px]"
+        className="relative"
+        style={{ width: widthValue, height: heightValue }}
         onMouseMove={handleMove}
         onMouseLeave={handleLeave}
       >
@@ -40,7 +45,7 @@ export function ProgressiveImage({ src, alt, onClick, children, compareSrc }: { 
               src={compareSrc as string}
               alt={`${alt} (original)`}
               fill
-              sizes="256px"
+              sizes={sizesStr}
               unoptimized
               className={`absolute inset-0 object-cover rounded-md border border-white/10 ${loaded ? "opacity-100" : "opacity-0"}`}
               draggable={false}
@@ -53,7 +58,7 @@ export function ProgressiveImage({ src, alt, onClick, children, compareSrc }: { 
               onLoad={() => setLoaded(true)}
               onClick={onClick}
               fill
-              sizes="256px"
+              sizes={sizesStr}
               unoptimized
               style={{ clipPath: `inset(0 ${100 - clipPercent}% 0 0)` }}
               className={`absolute inset-0 object-cover rounded-md border border-white/10 cursor-zoom-in transition-opacity duration-500 ${loaded ? "opacity-100" : "opacity-0"}`}
@@ -72,7 +77,7 @@ export function ProgressiveImage({ src, alt, onClick, children, compareSrc }: { 
             onLoad={() => setLoaded(true)}
             onClick={onClick}
             fill
-            sizes="256px"
+            sizes={sizesStr}
             unoptimized
             className={`absolute inset-0 object-cover rounded-md border border-white/10 cursor-zoom-in transition-opacity duration-500 ${loaded ? "opacity-100" : "opacity-0"}`}
             draggable={false}

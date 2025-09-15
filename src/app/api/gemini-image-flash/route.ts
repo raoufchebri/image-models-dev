@@ -5,9 +5,10 @@ import { db } from "@/db";
 import { usersTable } from "@/db/schema";
 import { auth } from '@clerk/nextjs/server';
 import { uploadFile } from "@/storage";
+import { and, eq } from 'drizzle-orm';
 
 export async function POST(request: NextRequest) {
-    type RequestBody = { prompt?: string; image?: string };
+    type RequestBody = { prompt?: string; image?: string; enhance?: boolean };
     const body = (await request.json()) as RequestBody;
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
@@ -26,11 +27,34 @@ export async function POST(request: NextRequest) {
     const model = 'gemini-2.5-flash-image-preview';
 
     const { userId } = await auth();
+    if (!userId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    // Rate limit: max 10 completed image generations per user
+    try {
+      const existing = await db
+        .select({ id: usersTable.id })
+        .from(usersTable)
+        .where(and(eq(usersTable.userId, userId), eq(usersTable.status, 'completed')))
+        .limit(11);
+      if (existing.length >= 10) {
+        return NextResponse.json({ error: 'You have reached the limit of 10 image generations.' }, { status: 429 });
+      }
+    } catch {}
   
+    const enhance = Boolean(body?.enhance);
+    let promptText = String(body.prompt || '');
+    if (enhance && promptText.trim().length > 0) {
+      try {
+        const improved = await enhancePromptWithGemini(ai, promptText);
+        if (improved.trim().length > 0) promptText = improved.trim();
+      } catch {}
+    }
+
     const imageString = typeof body.image === 'string' ? (body.image as string) : undefined;
     // contents can be a plain string (text-only) or a structured content array
     type UserContent = { role: 'user'; parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }>; };
-    let contents: string | UserContent[] = String(body.prompt || '');
+    let contents: string | UserContent[] = promptText;
     if (imageString) {
       let inlineMime = 'image/png';
       let inlineData = '';
@@ -54,7 +78,7 @@ export async function POST(request: NextRequest) {
         {
           role: 'user',
           parts: [
-            { text: String(body.prompt || '') },
+            { text: promptText },
             { inlineData: { mimeType: inlineMime, data: inlineData } },
           ],
         },
@@ -93,7 +117,7 @@ export async function POST(request: NextRequest) {
       if (chunk.candidates?.[0]?.content?.parts?.[0]?.inlineData) {
         const random_image_name = Math.random().toString(36).substring(2, 15);
         const fileName = `${random_image_name}.${fileIndex++}`;
-        const inlineData = chunk.candidates[0].content.parts[0].inlineData;
+        const inlineData = chunk.candidates[0].content.parts[0].inlineData as { mimeType?: string; data?: string };
         const mimeType = inlineData.mimeType || 'image/png';
         const fileExtension = mime.getExtension(mimeType || '') || 'png';
         const buffer = Buffer.from(inlineData.data || '', 'base64');
@@ -112,7 +136,7 @@ export async function POST(request: NextRequest) {
     if (savedImageUrl) {
       const generation: typeof usersTable.$inferInsert = {
         userId: userId ?? null,
-        prompt: String(body.prompt || ''),
+        prompt: promptText,
         inputImageUrl: imageString || '',
         outputImageUrl: savedImageUrl || '',
         model: 'gemini-image-flash',
@@ -150,4 +174,32 @@ export async function POST(request: NextRequest) {
 }
 
 
-  
+async function enhancePromptWithGemini(ai: GoogleGenAI, prompt: string): Promise<string> {
+  const instruction = `You are an expert image prompt engineer. Improve the prompt with vivid, concrete, unambiguous details, styles, lighting, camera, composition, and constraints, while preserving the original intent. Respond with only the improved prompt.`;
+  try {
+    const result = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [
+        { role: 'user', parts: [{ text: instruction }] },
+        { role: 'user', parts: [{ text: prompt }] },
+      ],
+    });
+    try {
+      const text = (result as unknown as { response?: { text?: () => string } })?.response?.text?.();
+      if (typeof text === 'string' && text.trim().length > 0) return text.trim();
+    } catch {}
+    try {
+      const parts = (result as unknown as { response?: { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> } })?.response?.candidates?.[0]?.content?.parts;
+      if (Array.isArray(parts)) {
+        const t = parts.map((p) => p?.text || '').join('').trim();
+        if (t) return t;
+      }
+    } catch {}
+    const r = result as unknown as { text?: string; content?: string };
+    const fallback = r?.text || r?.content || '';
+    if (typeof fallback === 'string' && fallback.trim().length > 0) return fallback.trim();
+    return prompt;
+  } catch {
+    return prompt;
+  }
+}

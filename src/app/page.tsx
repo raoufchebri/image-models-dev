@@ -32,7 +32,12 @@ export default function Home() {
   const [zoomUrl, setZoomUrl] = useState<string | null>(null);
   const [showLoadingSkeleton, setShowLoadingSkeleton] = useState(false);
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
+  const [videoMode, setVideoMode] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [userImages, setUserImages] = useState<string[]>([]);
+  const [loadingUserImages, setLoadingUserImages] = useState(false);
+  const [, setUserImageCount] = useState<number>(0);
+  const [userLimitReached, setUserLimitReached] = useState(false);
   const composerVisible = hasRun || transitioning;
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -55,8 +60,7 @@ export default function Home() {
     ["gemini" | "flux" | "imageGpt", boolean]
   >;
   const selectedLabels = selectedEntries
-    .map(([k]) => (k === "gemini" ? "Gemini" : k === "flux" ? "Flux-1" : "Image-GPT"))
-    .filter((label) => label !== "Flux-1");
+    .map(([k]) => (k === "gemini" ? "Gemini" : k === "flux" ? "Flux-1" : "Image-GPT"));
 
   useEffect(() => {
     if (!hasRun) return;
@@ -89,9 +93,41 @@ export default function Home() {
     }
   }, []);
 
+  // Load user's previous images for landing view and track limit status
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (!isSignedIn) {
+        setUserImages([]);
+        setUserLimitReached(false);
+        setUserImageCount(0);
+        return;
+      }
+      try {
+        setLoadingUserImages(true);
+        const r = await fetch("/api/fetch-images", { method: "GET" });
+        if (!r.ok) return;
+        const json = (await r.json()) as { urls?: string[]; count?: number; limitReached?: boolean };
+        if (!cancelled) {
+          setUserLimitReached(Boolean(json?.limitReached));
+          setUserImageCount(typeof json?.count === 'number' ? json.count! : 0);
+          if (!hasRun) setUserImages(Array.isArray(json?.urls) ? json.urls : []);
+        }
+      } catch {
+        // ignore
+      } finally {
+        if (!cancelled) setLoadingUserImages(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [isSignedIn, hasRun]);
+
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!prompt.trim()) return;
+    // Prevent running while determining limit status
+    if (isSignedIn && !hasRun && loadingUserImages) return;
     if (!isSignedIn) {
       try {
         localStorage.setItem("pendingPrompt", prompt);
@@ -99,6 +135,10 @@ export default function Home() {
         // ignore
       }
       redirectToSignIn({ afterSignInUrl: typeof window !== "undefined" ? window.location.href : "/" });
+      return;
+    }
+    if (userLimitReached) {
+      setError("You have reached the limit of 10 image generations.");
       return;
     }
     setLoading(true);
@@ -137,6 +177,36 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       } as const;
+
+      // If in video mode, call Veo3 only and return
+      if (videoMode) {
+        try {
+          const r = await fetch("/api/veo3", fetchParams);
+          if (!r.ok) throw new Error(await r.text().catch(() => "Veo3 request failed"));
+          const data = (await r.json()) as { url?: string[] };
+          const videoUrls = Array.isArray(data?.url) ? data.url : [];
+          const assistantMessage: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: videoUrls.length > 0 ? `Video generated: ${videoUrls[0]}` : "Video generated",
+          };
+          setMessages((prev) => [...prev, assistantMessage]);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "An error occurred";
+          setError(message);
+          const assistantMessage: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: message,
+          };
+          setMessages((prev) => [...prev, assistantMessage]);
+        } finally {
+          setVideoMode(false);
+          setShowLoadingSkeleton(false);
+          setLoading(false);
+        }
+        return;
+      }
 
       const tasks: { label: string; promise: Promise<ModelResponse> }[] = [];
       if (selectedModels.imageGpt) {
@@ -213,6 +283,15 @@ export default function Home() {
       // Wait for all to finish before returning (allows button to re-enable)
       await Promise.allSettled(tasks.map((t) => t.promise));
       setShowLoadingSkeleton(false);
+      // Refresh user limit/count after generation
+      try {
+        const r = await fetch("/api/fetch-images", { method: "GET" });
+        if (r.ok) {
+          const json = (await r.json()) as { urls?: string[]; count?: number; limitReached?: boolean };
+          setUserLimitReached(Boolean(json?.limitReached));
+          setUserImageCount(typeof json?.count === 'number' ? json.count! : 0);
+        }
+      } catch {}
     } catch (error) {
       const message = error instanceof Error ? error.message : "An error occurred";
       setError(message);
@@ -337,13 +416,83 @@ export default function Home() {
                     placeholder="Start typing a prompt"
                     className="flex-1 bg-transparent outline-none text-base sm:text-lg placeholder-white/40"
                   />
-                  <button aria-label="Run" className="shrink-0 h-10 px-4 rounded-full bg-white text-black hover:bg-white/90 flex items-center gap-2" onClick={() => handleSubmit()}>
-                    <span>Run</span>
-                    <span className="opacity-60 hidden sm:inline">⌘↩</span>
+                  <button aria-label="Run" className={`shrink-0 h-10 px-4 rounded-full bg-white text-black hover:bg-white/90 flex items-center gap-2 ${(userLimitReached || (isSignedIn && loadingUserImages)) ? 'opacity-50 cursor-not-allowed hover:bg-white' : ''}`} onClick={() => handleSubmit()} disabled={userLimitReached || (isSignedIn && loadingUserImages)}>
+                    <span>{userLimitReached ? 'Limit reached' : (isSignedIn && loadingUserImages ? 'Loading…' : 'Run')}</span>
+                    {!userLimitReached && !(isSignedIn && loadingUserImages) && <span className="opacity-60 hidden sm:inline">⌘↩</span>}
                   </button>
                 </div>
+                {userLimitReached ? (
+                  <div className="mt-3 text-red-400 text-sm">You reached your limit of 10 image generations.</div>
+                ) : null}
               </div>
             </div>
+            {(isSignedIn && (userImages.length > 0 || loadingUserImages)) ? (
+              <div className="w-full max-w-4xl fade-in">
+                
+                {loadingUserImages && userImages.length === 0 ? (
+                  <div className="w-full flex justify-center items-center py-10">
+                    <div className="spinner" />
+                    <span className="ml-3 text-white/70 text-sm">Loading your images…</span>
+                  </div>
+                ) : (
+                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {(() => {
+                      const images = userImages.slice(0, 24);
+                      const bigImages = images.filter((_, i) => i % 2 === 0);
+                      const smallImages = images.filter((_, i) => i % 2 === 1);
+                      const renderTile = (url: string, i: number, size: 'big' | 'small') => {
+                        const bigHeights = [320, 304, 288];
+                        const smallHeights = [192, 208, 224, 240, 256];
+                        const h = size === 'big' ? bigHeights[i % bigHeights.length] : smallHeights[i % smallHeights.length];
+                        return (
+                          <div key={`${url}-${i}`} className="break-inside-avoid">
+                            <ProgressiveImage src={url} alt="Your generated image" onClick={() => setZoomUrl(url)} width="100%" height={h}>
+                              <div className="absolute bottom-2 left-2 pointer-events-auto">
+                                <button
+                                  type="button"
+                                  aria-label="Use this image"
+                                  title="Use this image for edit"
+                                  onClick={(e) => { e.stopPropagation(); setUploadedImage(url); }}
+                                  className="h-8 w-8 rounded-full grid place-items-center border transition-colors bg-black/20 text-white/80 border-white/30 hover:bg-black/30"
+                                >
+                                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4"/>
+                                  </svg>
+                                </button>
+                              </div>
+                              <div className="absolute bottom-2 right-2 pointer-events-auto">
+                                <a
+                                  href={url}
+                                  download
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => { e.stopPropagation(); }}
+                                  className="h-8 w-8 rounded-full grid place-items-center border transition-colors bg-black/20 text-white/80 border-white/30 hover:bg-black/30"
+                                >
+                                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/>
+                                  </svg>
+                                </a>
+                              </div>
+                            </ProgressiveImage>
+                          </div>
+                        );
+                      };
+                      return (
+                        <>
+                          <div className="flex flex-col gap-4">
+                            {bigImages.map((url, i) => renderTile(url, i, 'big'))}
+                          </div>
+                          <div className="flex flex-col gap-4">
+                            {smallImages.map((url, i) => renderTile(url, i, 'small'))}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            ) : null}
           </>
         ) : (
           // Chat view
@@ -521,23 +670,8 @@ export default function Home() {
           </div>
         )}
       </main>
-      {/* Powered by Tigris fixed footer (centered) */}
-      <div
-        className="fixed left-0 right-0 flex justify-center z-30 pointer-events-none"
-        style={{ bottom: composerVisible ? 96 : 16 }}
-      >
-        <a
-          href="https://www.tigrisdata.com"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex flex-col items-center gap-1 text-white/70 hover:text-white pointer-events-auto"
-        >
-          <span className="text-sm">Powered by</span>
-          <Image src="/tigris-logo.svg" alt="Tigris" width={96} height={24} />
-        </a>
-      </div>
       {/* Global chat composer fixed at bottom; visible during first transition and after */}
-      <form onSubmit={handleSubmit} className={`fixed bottom-0 left-0 right-0 w-full transition-opacity duration-200 ${composerVisible ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
+      <form onSubmit={handleSubmit} className={`fixed bottom-0 left-0 right-0 w-full transition-opacity duration-200 z-50 ${composerVisible ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
         <div className="mx-auto w-full max-w-3xl px-6 sm:px-8 pb-6">
           <div
             className={`rounded-2xl border ${isDragging ? 'border-white/30' : 'border-white/10'} bg-white/5 backdrop-blur p-3 sm:p-4 flex items-center gap-3`}
@@ -588,13 +722,28 @@ export default function Home() {
               placeholder="Start typing a prompt"
               className="flex-1 bg-transparent outline-none text-base sm:text-lg placeholder-white/40"
             />
-            <button type="submit" className="shrink-0 h-10 px-4 rounded-full bg-white text-black hover:bg-white/90 flex items-center gap-2" disabled={loading}>
-              <span>{loading ? "Running" : "Run"}</span>
-              {!loading && <span className="opacity-60 hidden sm:inline">⌘↩</span>}
+            <button type="submit" className={`shrink-0 h-10 px-4 rounded-full bg-white text-black hover:bg-white/90 flex items-center gap-2 ${userLimitReached ? 'opacity-50 cursor-not-allowed hover:bg-white' : ''}`} disabled={loading || userLimitReached}>
+              <span>{userLimitReached ? "Limit reached" : (loading ? "Running" : "Run")}</span>
+              {!loading && !userLimitReached && <span className="opacity-60 hidden sm:inline">⌘↩</span>}
             </button>
           </div>
+          {userLimitReached ? (
+            <div className="mt-2 text-red-400 text-sm">You reached your limit of 10 image generations.</div>
+          ) : null}
         </div>
       </form>
+      {/* Relative footer at the bottom of the page */}
+      <footer className="w-full flex justify-center py-6 mt-8">
+        <a
+          href="https://www.tigrisdata.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2 text-white/70 hover:text-white"
+        >
+          <span className="text-sm">Powered by</span>
+          <Image src="/tigris-logo.svg" alt="Tigris" width={96} height={24} />
+        </a>
+      </footer>
     </div>
   );
 }
