@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { useAuth, useClerk } from "@clerk/nextjs";
 import { ProgressiveImage } from "@/app/components/ProgressiveImage";
+import { MigrationModal } from "@/app/components/MigrationModal";
 
 type ChatMessage = {
   id: string;
@@ -45,6 +46,7 @@ export default function Home() {
   const [selectedModels, setSelectedModels] = useState<{ gemini: boolean; flux: boolean; imageGpt: boolean }>({ gemini: true, flux: true, imageGpt: true });
   const { isSignedIn } = useAuth();
   const { redirectToSignIn } = useClerk();
+  const [migrationOpen, setMigrationOpen] = useState(false);
 
   const scrollToBottom = (behavior: ScrollBehavior = "smooth") => {
     const container = chatScrollRef.current;
@@ -79,6 +81,20 @@ export default function Home() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [zoomUrl]);
+
+  // Global Command/Ctrl+K to open migration modal
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const isMac = navigator.platform.toUpperCase().includes("MAC");
+      const cmd = isMac ? e.metaKey : e.ctrlKey;
+      if (cmd && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        setMigrationOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   // Restore pending prompt after returning from sign-in
   useEffect(() => {
@@ -360,6 +376,10 @@ export default function Home() {
               {label}
             </button>
           ))}
+        </div>
+        <div className="text-xs text-white/60">
+          Tip: Press <kbd className="px-1 py-0.5 rounded border border-white/20 bg-white/5">⌘K</kbd> or <kbd className="px-1 py-0.5 rounded border border-white/20 bg-white/5">Ctrl+K</kbd> to migrate your images to your own bucket.
+          <button type="button" onClick={() => setMigrationOpen(true)} className="ml-2 underline hover:text-white">Migrate now</button>
         </div>
 
         {!hasRun ? (
@@ -670,6 +690,7 @@ export default function Home() {
           </div>
         )}
       </main>
+      <MigrationModal open={migrationOpen} onClose={() => setMigrationOpen(false)} />
       {/* Global chat composer fixed at bottom; visible during first transition and after */}
       <form onSubmit={handleSubmit} className={`fixed bottom-0 left-0 right-0 w-full transition-opacity duration-200 z-50 ${composerVisible ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
         <div className="mx-auto w-full max-w-3xl px-6 sm:px-8 pb-6">
