@@ -56,7 +56,10 @@ export function MigrationModal({ open, onClose }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bucketName, accessKeyId, secretAccessKey }),
       });
-      const json = await r.json().catch(() => ({} as any));
+      let json: { migrated?: number; error?: unknown } = {};
+      try {
+        json = (await r.json()) as { migrated?: number; error?: unknown };
+      } catch {}
       if (!r.ok) {
         throw new Error(typeof json?.error === "string" ? json.error : "Migration failed");
       }
@@ -145,7 +148,7 @@ export function MigrationModal({ open, onClose }: Props) {
             <div className="rounded-lg border border-white/10 bg-white/5 p-3 sm:p-4 text-sm text-white/80">
               <ol className="list-decimal pl-5 space-y-1">
                 <li>
-                  Create a bucket on <a href="https://storage.new" target="_blank" rel="noopener noreferrer" className="underline hover:text-white">storage.new</a> if you don't have one.
+                  Create a bucket on <a href="https://storage.new" target="_blank" rel="noopener noreferrer" className="underline hover:text-white">storage.new</a> if you don&apos;t have one.
                 </li>
                 <li>
                   Create an access key with <span className="font-medium">Read/Write</span> permissions.
