@@ -26,6 +26,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   // Rate limit: max 10 completed image generations per user
+  const startTime = Date.now();
+
   try {
     const existing = await db
       .select({ id: usersTable.id })
@@ -46,12 +48,17 @@ export async function POST(request: NextRequest) {
       if (enhanced.trim().length > 0) {
         promptText = enhanced.trim();
       }
-    } catch {}
+    } catch (error) {
+      console.error('Failed to enhance prompt:', error);
+    }
   }
 
   try {
+    console.log('Starting image generation with prompt:', promptText);
     let response: OpenAI.Images.ImagesResponse;
+    
     if (body.image) {
+      console.log('Processing image edit request');
       const images = await Promise.all(
         [body.image].map(async (file) =>
             await toFile(fs.createReadStream(file as string), null, {
@@ -63,11 +70,13 @@ export async function POST(request: NextRequest) {
       response = await openai.images.edit({
         model: 'gpt-image-1',
         prompt: promptText,
-        image: images,
+        image: images[0],
+        n: 1,
+        size: '1024x1024'
       });
     }
     else {
-
+      console.log('Processing image generation request');
       response = await openai.images.generate({
         model: 'gpt-image-1',
         prompt: promptText,
@@ -113,6 +122,7 @@ export async function POST(request: NextRequest) {
 
     let savedImageUrl: string | undefined;
     if (imageBase64List.length > 0) {
+      console.log('Processing image for storage');
       const randomImageName = Math.random().toString(36).substring(2, 15);
       const mimeType = 'image/png';
       const ext = mime.getExtension(mimeType) || 'png';
@@ -122,21 +132,26 @@ export async function POST(request: NextRequest) {
       try {
         const url = await uploadFile(fileName, buffer, mimeType);
         savedImageUrl = url || `data:${mimeType};base64,${imageBase64List[0]}`;
-      } catch {
+        console.log('Image saved successfully:', !!url);
+      } catch (error) {
+        console.error('Failed to upload image:', error);
         savedImageUrl = `data:${mimeType};base64,${imageBase64List[0]}`;
       }
     }
 
     if (savedImageUrl) {
+      const durationMs = Date.now() - startTime;
+      console.log('Saving generation to database');
       const generation: typeof usersTable.$inferInsert = {
         userId: userId ?? null,
         prompt: promptText,
-        inputImageUrl: savedImageUrl || '',
-        outputImageUrl: savedImageUrl || '',
+        inputImageUrl: body.image || '',
+        outputImageUrl: savedImageUrl,
         model: 'image-gpt',
         status: 'completed',
         error: '',
-        metadata: {},
+        metadata: { tokens: totalTokens },
+        generationDurationMs: durationMs,
       }
       await db.insert(usersTable).values(generation);
       return NextResponse.json({
@@ -144,6 +159,7 @@ export async function POST(request: NextRequest) {
         image: savedImageUrl,
         text: fullText || undefined,
         tokens: totalTokens,
+        durationMs,
         usage: {
           inputTokens,
           outputTokens,

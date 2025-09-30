@@ -40,6 +40,7 @@ export async function POST(request: NextRequest) {
   }
   // const aspect_ratio: string = String(body?.aspect_ratio || '1:1');
   const input_image: string | undefined = body.image;
+  const startTime = Date.now();
   
   type FluxRequestBody = { prompt: string; input_image?: string };
   const fluxBody: FluxRequestBody = { prompt };
@@ -138,6 +139,7 @@ export async function POST(request: NextRequest) {
         // ignore upload errors; we'll fall back to originalImageUrl
       }
 
+      const durationMs = Date.now() - startTime;
       const generation: typeof usersTable.$inferInsert = {
         userId: userId ?? null,
         prompt: prompt,
@@ -147,6 +149,7 @@ export async function POST(request: NextRequest) {
         status: 'completed',
         error: '',
         metadata: {},
+        generationDurationMs: durationMs,
       }
 
       await db.insert(usersTable).values(generation);
@@ -154,6 +157,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         url: savedImageUrl || originalImageUrl,
+        durationMs,
       });
     } else if (pollJson.status === 'Error' || pollJson.status === 'Failed') {
       return NextResponse.json({ error: 'Generation failed', details: pollJson }, { status: 500 });

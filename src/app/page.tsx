@@ -21,6 +21,7 @@ type ModelResponse = {
   success?: boolean;
   tokens?: number;
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
+  durationMs?: number;
 };
 
 export default function Home() {
@@ -43,7 +44,7 @@ export default function Home() {
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [selectedModels, setSelectedModels] = useState<{ gemini: boolean; flux: boolean; imageGpt: boolean }>({ gemini: true, flux: true, imageGpt: true });
+  const [selectedModels, setSelectedModels] = useState<{ gemini: boolean; flux: boolean }>({ gemini: true, flux: true });
   const { isSignedIn } = useAuth();
   const { redirectToSignIn } = useClerk();
   const [migrationOpen, setMigrationOpen] = useState(false);
@@ -59,10 +60,10 @@ export default function Home() {
   };
 
   const selectedEntries = Object.entries(selectedModels).filter(([, v]) => v) as Array<
-    ["gemini" | "flux" | "imageGpt", boolean]
+    ["gemini" | "flux", boolean]
   >;
   const selectedLabels = selectedEntries
-    .map(([k]) => (k === "gemini" ? "Gemini" : k === "flux" ? "Flux-1" : "Image-GPT"));
+    .map(([k]) => (k === "gemini" ? "Gemini" : "Flux-1"));
 
   useEffect(() => {
     if (!hasRun) return;
@@ -225,15 +226,6 @@ export default function Home() {
       }
 
       const tasks: { label: string; promise: Promise<ModelResponse> }[] = [];
-      if (selectedModels.imageGpt) {
-        const imageGptPromise: Promise<ModelResponse> = fetch("/api/image-gpt", {
-          ...fetchParams,
-        }).then(async (r) => {
-          if (!r.ok) throw new Error(await r.text().catch(() => "Image-GPT request failed"));
-          return r.json() as Promise<ModelResponse>;
-        });
-        tasks.push({ label: "Image-GPT", promise: imageGptPromise });
-      }
       if (selectedModels.gemini) {
         const geminiPromise: Promise<ModelResponse> = fetch("/api/gemini-image-flash", {
           ...fetchParams,
@@ -254,8 +246,6 @@ export default function Home() {
       }
 
       const initialVariants = tasks.map((t) => ({ label: t.label }));
-      const startTimes: Record<string, number> = {};
-      tasks.forEach((t) => { startTimes[t.label] = performance.now(); });
       const assistantId = crypto.randomUUID();
       const assistantMessage: ChatMessage = {
         id: assistantId,  
@@ -277,12 +267,11 @@ export default function Home() {
               const nextVariants = (m.variants || []).map((v) => {
                 if (v.label !== t.label) return v;
                 const imageUrl = typeof value?.image === "string" ? value.image : (typeof value?.url === "string" ? value.url : undefined);
-                const durationMs = Math.round(performance.now() - (startTimes[t.label] ?? performance.now()));
+                const durationMs = typeof value?.durationMs === "number" ? value.durationMs : undefined;
                 const tokens = typeof value?.tokens === 'number' ? value.tokens : (typeof value?.usage?.totalTokens === 'number' ? value.usage.totalTokens : undefined);
                 return { ...v, imageUrl, text, durationMs, tokens };
               });
-              const nextContent = t.label === "Image-GPT" ? text ?? m.content : m.content;
-              return { ...m, variants: nextVariants, content: nextContent };
+              return { ...m, variants: nextVariants };
             }));
           })
           .catch((err) => {
@@ -290,8 +279,7 @@ export default function Home() {
             setMessages((prev) => prev.map((m) => {
               if (m.id !== assistantId) return m;
               const nextVariants = (m.variants || []).map((v) => (v.label === t.label ? { ...v, text: message } : v));
-              const nextContent = t.label === "Image-GPT" ? message : m.content;
-              return { ...m, variants: nextVariants, content: nextContent };
+              return { ...m, variants: nextVariants };
             }));
           });
       });
@@ -364,7 +352,6 @@ export default function Home() {
         <div className="flex items-center gap-2 -mt-2">
           {[
             { key: "gemini", label: "Gemini" },
-            { key: "imageGpt", label: "Image-GPT" },
             { key: "flux", label: "Flux-1" },
           ].map(({ key, label }) => (
             <button
@@ -526,101 +513,96 @@ export default function Home() {
                   <div className="p-2 whitespace-pre-wrap">
                     {m.role === "assistant" && m.content ? <p className="mb-4">{m.content}</p> : null}
                     {m.variants && m.variants.length > 0 ? (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                         {m.variants.map((v) => {
                           const isPending = !v.imageUrl && !v.text;
                           const hasImage = Boolean(v.imageUrl);
                           if (!isPending && !hasImage) return null; // hide fully if resolved without image
                           return (
-                            <div key={v.label}>
-                              <div className="text-xs uppercase tracking-wider text-white/50 mb-2">
-                                {v.label}
-                                {typeof v.durationMs === "number" && !isPending ? ` · ${(v.durationMs / 1000).toFixed(1)}s` : ""}
-                                {typeof v.tokens === "number" && !isPending ? ` · ${v.tokens} token` : ""}
+                            <div key={v.label} className="flex flex-col">
+                              <div className="rounded-xl border border-white/10 bg-white/[0.02] backdrop-blur overflow-hidden transition-all hover:border-white/20 hover:shadow-xl group">
+                                {isPending ? (
+                                  <div className="w-full aspect-square">
+                                    <div className="shimmer rounded-lg w-full h-full" />
+                                  </div>
+                                ) : (
+                                  <div className="w-full aspect-square relative">
+                                    <ProgressiveImage
+                                      src={v.imageUrl as string}
+                                      alt={`${v.label} result`}
+                                      onClick={() => setZoomUrl(v.imageUrl || null)}
+                                      compareSrc={uploadedImage}
+                                      frame={false}
+                                    >
+                                      <div className="absolute bottom-3 left-3 pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <button
+                                          type="button"
+                                          aria-label="Use this image"
+                                          title="Use this image for edit"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (v.imageUrl) setUploadedImage(v.imageUrl);
+                                          }}
+                                          className="h-9 w-9 rounded-full grid place-items-center border transition-all bg-black/40 backdrop-blur-sm text-white border-white/30 hover:bg-black/60 hover:scale-110"
+                                        >
+                                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4"/>
+                                          </svg>
+                                        </button>
+                                      </div>
+                                      <div className="absolute bottom-3 right-3 pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <a
+                                          href={v.imageUrl as string}
+                                          download
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                          }}
+                                          className="h-9 w-9 rounded-full grid place-items-center border transition-all bg-black/40 backdrop-blur-sm text-white border-white/30 hover:bg-black/60 hover:scale-110"
+                                        >
+                                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/>
+                                          </svg>
+                                        </a>
+                                      </div>
+                                    </ProgressiveImage>
+                                  </div>
+                                )}
+                                <div className="px-4 py-3 border-t border-white/10">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-sm font-medium text-white/90">{v.label}</span>
+                          <div className="flex items-center gap-3 text-xs text-white/50">
+                                      {typeof v.durationMs === "number" && !isPending ? (
+                                        <span className="flex items-center gap-1">
+                                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3">
+                                            <circle cx="12" cy="12" r="10"/>
+                                            <polyline points="12 6 12 12 16 14"/>
+                                          </svg>
+                                          {(v.durationMs / 1000).toFixed(1)}s
+                                        </span>
+                                      ) : null}
+                                      {typeof v.tokens === "number" && !isPending ? (
+                                        <span className="flex items-center gap-1">
+                                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3">
+                                            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                                            <path d="M2 17l10 5 10-5"/>
+                                            <path d="M2 12l10 5 10-5"/>
+                                          </svg>
+                                          {v.tokens}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                </div>
                               </div>
-                              {isPending ? (
-                                <div className="w-full flex justify-center">
-                                  <div className="shimmer rounded-md border border-white/10 w-[256px] h-[256px]" />
-                                </div>
-                              ) : (
-                                <div className="w-full flex justify-center">
-                                  <ProgressiveImage
-                                    src={v.imageUrl as string}
-                                    alt={`${v.label} result`}
-                                    onClick={() => setZoomUrl(v.imageUrl || null)}
-                                    compareSrc={uploadedImage}
-                                  >
-                                    <div className="absolute bottom-2 left-2 pointer-events-auto">
-                                      <button
-                                        type="button"
-                                        aria-label="Use this image"
-                                        title="Use this image for edit"
-                                        onClick={(e) => { e.stopPropagation(); if (v.imageUrl) setUploadedImage(v.imageUrl); }}
-                                        className="h-8 w-8 rounded-full grid place-items-center border transition-colors bg-black/20 text-white/80 border-white/30 hover:bg-black/30"
-                                      >
-                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
-                                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4"/>
-                                        </svg>
-                                      </button>
-                                    </div>
-                                    <div className="absolute bottom-2 right-2 pointer-events-auto">
-                                      <a
-                                        href={v.imageUrl as string}
-                                        download
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        onClick={(e) => { e.stopPropagation(); }}
-                                        className="h-8 w-8 rounded-full grid place-items-center border transition-colors bg-black/20 text-white/80 border-white/30 hover:bg-black/30"
-                                      >
-                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
-                                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/>
-                                        </svg>
-                                      </a>
-                                    </div>
-                                  </ProgressiveImage>
-                                </div>
-                              )}
                             </div>
                           );
                         })}
                       </div>
-                    ) : m.imageUrl ? (
-                      <ProgressiveImage
-                        src={m.imageUrl}
-                        alt="Generated"
-                        onClick={() => setZoomUrl(m.imageUrl || null)}
-                      >
-                        <div className="absolute bottom-2 left-2 pointer-events-auto">
-                          <button
-                            type="button"
-                            aria-label="Use this image"
-                            title="Use this image for edit"
-                            onClick={(e) => { e.stopPropagation(); if (m.imageUrl) setUploadedImage(m.imageUrl); }}
-                            className="h-8 w-8 rounded-full grid place-items-center border transition-colors bg-black/20 text-white/80 border-white/30 hover:bg-black/30"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4"/>
-                            </svg>
-                          </button>
-                        </div>
-                        <div className="absolute bottom-2 right-2 pointer-events-auto">
-                          <a
-                            href={m.imageUrl}
-                            download
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => { e.stopPropagation(); }}
-                            className="h-8 w-8 rounded-full grid place-items-center border transition-colors bg-black/20 text-white/80 border-white/30 hover:bg-black/30"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/>
-                            </svg>
-                          </a>
-                        </div>
-                      </ProgressiveImage>
-                    ) : (
-                      m.content && m.role === "user" ? m.content : null
-                    )}
+                    ) : m.role === "user" && m.content ? (
+                      m.content
+                    ) : null}
                   </div>
                   {i < messages.length - 1 ? (
                     <div className="h-px bg-white/10 my-4" />
@@ -631,16 +613,25 @@ export default function Home() {
                 <div>
                   <div className="text-sm uppercase tracking-wider text-white/50 mb-2">Model responses</div>
                   <div className="p-2">
-                    <div className="flex items-center gap-3 mb-3">
+                    <div className="flex items-center gap-3 mb-6">
                       <div className="spinner" />
                       <p className="text-white/70">Generating images…</p>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                       {selectedLabels.map((label) => (
-                        <div key={label}>
-                          <div className="text-xs uppercase tracking-wider text-white/50 mb-2">{label}</div>
-                          <div className="w-full flex justify-center">
-                            <div className="shimmer rounded-md border border-white/10 w-[256px] h-[256px]" />
+                        <div key={label} className="flex flex-col">
+                          <div className="rounded-xl border border-white/10 bg-white/[0.02] backdrop-blur overflow-hidden">
+                            <div className="w-full aspect-square flex items-center justify-center">
+                              <div className="shimmer rounded-lg w-full h-full" />
+                            </div>
+                            <div className="px-4 py-3 border-t border-white/10">
+                              <div className="flex items-center justify-between">
+                                <span className="text-sm font-medium text-white/90">{label}</span>
+                                <div className="flex items-center gap-2">
+                                  <div className="h-2 w-12 bg-white/10 rounded shimmer" />
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       ))}

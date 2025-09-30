@@ -15,6 +15,13 @@
       "when": 1757938836848,
       "tag": "0001_chief_puff_adder",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1759225168118,
+      "tag": "0002_lively_mystique",
+      "breakpoints": true
     }
   ]
 }

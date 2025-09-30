@@ -11,4 +11,5 @@ export const usersTable = pgTable("generations", {
     error: varchar({ length: 255 }).notNull(),
     metadata: jsonb().notNull(),
     createdAt: timestamp().notNull().defaultNow(),
+    generationDurationMs: integer(),
   });

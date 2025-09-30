@@ -52,6 +52,7 @@ export async function POST(request: NextRequest) {
     }
 
     const imageString = typeof body.image === 'string' ? (body.image as string) : undefined;
+    const startTime = Date.now();
     // contents can be a plain string (text-only) or a structured content array
     type UserContent = { role: 'user'; parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }>; };
     let contents: string | UserContent[] = promptText;
@@ -134,6 +135,7 @@ export async function POST(request: NextRequest) {
       }
     }
     if (savedImageUrl) {
+      const durationMs = Date.now() - startTime;
       const generation: typeof usersTable.$inferInsert = {
         userId: userId ?? null,
         prompt: promptText,
@@ -142,7 +144,8 @@ export async function POST(request: NextRequest) {
         model: 'gemini-image-flash',
         status: 'completed',
         error: '',
-        metadata: {},
+        metadata: { tokens: totalTokenCount },
+        generationDurationMs: durationMs,
       }
       await db.insert(usersTable).values(generation);
       
@@ -151,6 +154,7 @@ export async function POST(request: NextRequest) {
         image: savedImageUrl,
         text: fullText || undefined,
         tokens: typeof totalTokenCount === 'number' ? totalTokenCount : undefined,
+        durationMs,
         usage: {
           inputTokens: promptTokenCount,
           outputTokens: candidatesTokenCount,

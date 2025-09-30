@@ -3,7 +3,18 @@
 import { useState, useRef } from "react";
 import Image from "next/image";
 
-export function ProgressiveImage({ src, alt, onClick, children, compareSrc, width = 256, height = 256 }: { src: string; alt: string; onClick?: () => void; children?: React.ReactNode; compareSrc?: string | null; width?: number | string; height?: number; }) {
+type ProgressiveImageProps = {
+  src: string;
+  alt: string;
+  onClick?: () => void;
+  children?: React.ReactNode;
+  compareSrc?: string | null;
+  width?: number | string;
+  height?: number | string;
+  frame?: boolean;
+};
+
+export function ProgressiveImage({ src, alt, onClick, children, compareSrc, width = "100%", height = "100%", frame = true }: ProgressiveImageProps) {
     const [loaded, setLoaded] = useState(false);
     const [hoverX, setHoverX] = useState<number | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
@@ -24,19 +35,31 @@ export function ProgressiveImage({ src, alt, onClick, children, compareSrc, widt
     const showCompare = Boolean(compareSrc);
     const clipPercent = hoverX !== null ? Math.round(hoverX * 100) : 50;
   
-    const widthValue = typeof width === 'number' ? `${width}px` : width;
-    const heightValue = typeof height === 'number' ? `${height}px` : `${height}px`;
-    const sizesStr = typeof width === 'number' ? `${width}px` : (typeof width === 'string' ? width : '256px');
+    const widthValue = typeof width === "number" ? `${width}px` : width;
+    const heightValue = typeof height === "number" ? `${height}px` : height;
+    const sizesStr = (() => {
+      if (typeof width === "number") return `${width}px`;
+      if (typeof width === "string") {
+        const trimmed = width.trim();
+        if (trimmed.endsWith("px") || trimmed.endsWith("vw") || trimmed.endsWith("vh")) {
+          return trimmed;
+        }
+      }
+      return "100vw";
+    })();
+
+    const frameClasses = frame ? "rounded-md border border-white/10" : "";
+    const loaderClasses = frame ? "rounded-md" : "";
 
     return (
       <div
         ref={containerRef}
-        className="relative"
+        className="relative h-full w-full"
         style={{ width: widthValue, height: heightValue }}
         onMouseMove={handleMove}
         onMouseLeave={handleLeave}
       >
-        <div className={`absolute inset-0 shimmer rounded-md border border-white/10 transition-opacity duration-500 ${loaded ? "opacity-0" : "opacity-100"}`} />
+        <div className={`absolute inset-0 shimmer transition-opacity duration-500 ${loaderClasses} ${loaded ? "opacity-0" : "opacity-100"}`} />
   
         {showCompare && hoverX !== null ? (
           <>
@@ -47,7 +70,7 @@ export function ProgressiveImage({ src, alt, onClick, children, compareSrc, widt
               fill
               sizes={sizesStr}
               unoptimized
-              className={`absolute inset-0 object-cover rounded-md border border-white/10 ${loaded ? "opacity-100" : "opacity-0"}`}
+              className={`absolute inset-0 object-cover ${frameClasses} ${loaded ? "opacity-100" : "opacity-0"}`}
               draggable={false}
               onClick={onClick}
             />
@@ -61,7 +84,7 @@ export function ProgressiveImage({ src, alt, onClick, children, compareSrc, widt
               sizes={sizesStr}
               unoptimized
               style={{ clipPath: `inset(0 ${100 - clipPercent}% 0 0)` }}
-              className={`absolute inset-0 object-cover rounded-md border border-white/10 cursor-zoom-in transition-opacity duration-500 ${loaded ? "opacity-100" : "opacity-0"}`}
+              className={`absolute inset-0 object-cover ${frameClasses} cursor-zoom-in transition-opacity duration-500 ${loaded ? "opacity-100" : "opacity-0"}`}
               draggable={false}
             />
             {/* Divider line (visible on hover) */}
@@ -79,7 +102,7 @@ export function ProgressiveImage({ src, alt, onClick, children, compareSrc, widt
             fill
             sizes={sizesStr}
             unoptimized
-            className={`absolute inset-0 object-cover rounded-md border border-white/10 cursor-zoom-in transition-opacity duration-500 ${loaded ? "opacity-100" : "opacity-0"}`}
+              className={`absolute inset-0 object-cover ${frameClasses} cursor-zoom-in transition-opacity duration-500 ${loaded ? "opacity-100" : "opacity-0"}`}
             draggable={false}
           />
         )}
