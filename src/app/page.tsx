@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth, useClerk } from "@clerk/nextjs";
 import { ProgressiveImage } from "@/app/components/ProgressiveImage";
 import { MigrationModal } from "@/app/components/MigrationModal";
@@ -45,6 +45,7 @@ export default function Home() {
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [selectedModels, setSelectedModels] = useState<{ gemini: boolean; flux: boolean }>({ gemini: true, flux: true });
+  const [avgSpeeds, setAvgSpeeds] = useState<{ fluxMs: number | null; geminiMs: number | null } | null>(null);
   const { isSignedIn } = useAuth();
   const { redirectToSignIn } = useClerk();
   const [migrationOpen, setMigrationOpen] = useState(false);
@@ -64,6 +65,24 @@ export default function Home() {
   >;
   const selectedLabels = selectedEntries
     .map(([k]) => (k === "gemini" ? "Gemini" : "Flux-1"));
+
+  const fetchModelSpeeds = useCallback(async () => {
+    try {
+      const res = await fetch("/api/model-speeds", { method: "GET" });
+      if (!res.ok) return;
+      const json = (await res.json()) as { fluxMs?: number | null; geminiMs?: number | null };
+      setAvgSpeeds({
+        fluxMs: typeof json?.fluxMs === "number" ? json.fluxMs : null,
+        geminiMs: typeof json?.geminiMs === "number" ? json.geminiMs : null,
+      });
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    fetchModelSpeeds();
+    const interval = setInterval(fetchModelSpeeds, 60_000);
+    return () => clearInterval(interval);
+  }, [fetchModelSpeeds]);
 
   useEffect(() => {
     if (!hasRun) return;
@@ -345,6 +364,23 @@ export default function Home() {
     setIsDragging(false);
   };
 
+  const fluxAvgMs = typeof avgSpeeds?.fluxMs === "number" ? avgSpeeds?.fluxMs : null;
+  const geminiAvgMs = typeof avgSpeeds?.geminiMs === "number" ? avgSpeeds?.geminiMs : null;
+  const maxDuration = Math.max(fluxAvgMs ?? 0, geminiAvgMs ?? 0);
+  const speedsLoaded = avgSpeeds !== null;
+  const hasSpeedData = fluxAvgMs !== null || geminiAvgMs !== null;
+  const getBarWidth = (duration: number | null) => {
+    if (!duration || !maxDuration) return "0%";
+    const percent = (duration / maxDuration) * 100;
+    const clamped = Math.min(100, Math.max(8, percent));
+    return `${clamped}%`;
+  };
+  const formatMs = (value: number | null) => {
+    if (typeof value !== "number" || !Number.isFinite(value)) return "–";
+    if (value >= 1000) return `${(value / 1000).toFixed(1)}s`;
+    return `${Math.round(value)}ms`;
+  };
+
   return (
     <div className="min-h-screen w-full bg-[var(--background)] text-[var(--foreground)] flex flex-col justify-center">
       <main className="flex flex-col items-center px-6 sm:px-8 py-16 gap-10">
@@ -367,6 +403,46 @@ export default function Home() {
         <div className="text-xs text-white/60">
           Tip: Press <kbd className="px-1 py-0.5 rounded border border-white/20 bg-white/5">⌘K</kbd> or <kbd className="px-1 py-0.5 rounded border border-white/20 bg-white/5">Ctrl+K</kbd> to migrate your images to your own bucket.
           <button type="button" onClick={() => setMigrationOpen(true)} className="ml-2 underline hover:text-white">Migrate now</button>
+        </div>
+        <div className="pointer-events-none fixed bottom-24 right-4 sm:right-8 text-[11px] text-white/60 hidden md:block">
+          <div className="rounded-xl border border-white/10 bg-black/40 backdrop-blur-md px-4 py-3 min-w-[180px] flex flex-col gap-1.5">
+            <div className="flex items-center justify-between gap-3 uppercase tracking-[0.18em] text-white/50">
+              <span>Avg gen</span>
+              {speedsLoaded && hasSpeedData ? null : (
+                <span className="text-[10px] text-white/35 normal-case">{speedsLoaded ? "No data" : "Loading"}</span>
+              )}
+            </div>
+            <div className="flex items-center justify-between gap-3 text-white/70">
+              <span className="flex items-center gap-2">
+                <span className="inline-flex h-1 w-3 rounded-full bg-white" aria-hidden="true" />
+                Flux-1
+              </span>
+              <div className="flex items-center gap-2 text-white/60">
+                <span>{formatMs(fluxAvgMs)}</span>
+                <div className="h-1 w-14 overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full transition-[width] duration-500"
+                    style={{ width: getBarWidth(fluxAvgMs), backgroundColor: "rgba(255,255,255,0.75)" }}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-3 text-white/70">
+              <span className="flex items-center gap-2">
+                <span className="inline-flex h-1 w-3 rounded-full" style={{ backgroundColor: "#FFD54F" }} aria-hidden="true" />
+                Gemini
+              </span>
+              <div className="flex items-center gap-2 text-white/60">
+                <span>{formatMs(geminiAvgMs)}</span>
+                <div className="h-1 w-14 overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full transition-[width] duration-500"
+                    style={{ width: getBarWidth(geminiAvgMs), backgroundColor: "#FFD54F" }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         {!hasRun ? (
